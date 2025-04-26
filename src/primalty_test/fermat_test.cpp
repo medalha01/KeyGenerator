@@ -35,7 +35,7 @@ BigInt FermatTest::generate_witness(const BigInt &n, PRNG &rng)
     return witness_number;
 }
 
-BigInt FermatTest::isPrime(const BigInt &n, int iterations, PRNG &rng)
+bool FermatTest::isPrime(const BigInt &n, int iterations, PRNG &rng)
 {
     if (n <= 1)
     {
