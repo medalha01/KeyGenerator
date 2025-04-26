@@ -1,19 +1,20 @@
 #pragma once
 
 #include <iostream>
-#include <cstdint>                          // For uint_fast32_t
-#include <boost/multiprecision/cpp_int.hpp> // Include Boost BigInt
-#include "primality_test.h"
+#include <cstdint>                      
+#include <boost/multiprecision/cpp_int.hpp>
+#include "primalty_test/primality_test.h"
 #include "prng.h"
 
-// Define BigInt type using Boost Multiprecision
-// cpp_int uses dynamically allocated memory as needed.
+
+
+
 using BigInt = boost::multiprecision::cpp_int;
 
 class KeyGenerator
 {
 private:
-    const int PRIMALITY_TEST_ITERATIONS = 64; // Default iterations for primality test
+    const int PRIMALITY_TEST_ITERATIONS = 64; 
     PRNG *prng;
     PrimalityTest *primality_tester;
 
