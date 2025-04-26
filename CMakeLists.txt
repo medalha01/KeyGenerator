@@ -9,7 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(SOURCE_FILES
     src/main.cpp
     src/pseudo_rng/mersenne_twister.cpp
-    # src/pseudo_rng/blum_blum_shub.cpp # Not needed as implementation is in header
+    src/primality_test/fermat_test.cpp
+    src/key_generator.cpp
+
 )
 
 # Add the executable
