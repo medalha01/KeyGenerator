@@ -10,7 +10,9 @@ set(SOURCE_FILES
     src/main.cpp
     src/pseudo_rng/mersenne_twister.cpp
     src/primality_test/fermat_test.cpp
+    src/primality_test/miller_rabin_test.cpp
     src/key_generator.cpp
+
 
 )
 

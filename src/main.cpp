@@ -1,143 +1,198 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// main.cpp  —  Experimentos completos:
-//   1) geração de primos (40 … 4096 bits)
-//   2) comparação MR × Fermat em números pequenos
-//   3) teste de Carmichael (pseudo-primos de Fermat)
-// ──────────────────────────────────────────────────────────────────────────────
+/*─────────────────────────────────────────────────────────────────────────────
+ *  main.cpp
+ *
+ *  Executa **três** baterias de testes, para **dois** PRNGs (MT e BBS) e
+ *  **dois** testes de primalidade (Miller-Rabin × Fermat):
+ *
+ *    1.  Geração de grandes primos (40 – 4096 bits) com tempo cronometrado.
+ *    2.  Amostras aleatórias de 16/24/32 bits – conta discrepâncias MR × Fermat.
+ *    3.  Números de Carmichael – casos clássicos onde Fermat falha.
+ *
+ *  A saída é sempre a mesma estrutura, apenas mudando o rótulo do PRNG,
+ *  facilitando redirecionar para arquivo ou filtrar via scripts.
+ *────────────────────────────────────────────────────────────────────────────*/
+
 #include "key_generator.h"
 #include "pseudo_rng/mersenne_twister.h"
-#include "primality_test/miller_rabin_test.h"
+#include "pseudo_rng/blum_blum_shub.h"
 #include "primality_test/fermat_test.h"
+#include "primality_test/miller_rabin_test.h" //  supondo que exista
 
+#include <sstream>
 #include <chrono>
+#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <vector>
 
+using BigInt = boost::multiprecision::cpp_int;
 using Clock = std::chrono::high_resolution_clock;
-using RNG32 = std::mt19937; // PRNG rápido p/ testes
+using Duration = std::chrono::duration<double, std::milli>;
 
-/*-----------------------------------------------------------------------------
-   Gera UM primo de ‘bits’ usando tester; devolve par (prime, tempoMs)
- ---------------------------------------------------------------------------*/
-static std::pair<BigInt, double>
-generatePrime(unsigned bits, uint_fast32_t seed, PrimalityTest &tester)
+/*─────────────────────────────────────────────────────────────────────────────
+ *  1.  Helpers para criar PRNGs a partir de string
+ *───────────────────────────────────────────────────────────────────────────*/
+using PrngFactory = std::function<std::unique_ptr<PRNG>()>;
+
+static PrngFactory makeFactory(const std::string &label)
 {
-    auto prng = std::make_unique<MersenneTwister>(seed);
+    if (label == "MT")
+        return []
+        { return std::make_unique<MersenneTwister>(0); };
+    if (label == "BBS")
+        return []
+        { return std::make_unique<BlumBlumShub>(0); };
+    throw std::invalid_argument("PRNG desconhecido: " + label);
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+ *  2.  Gera um primo de ‘bits’  ➜  (valor, tempo-ms)
+ *───────────────────────────────────────────────────────────────────────────*/
+static std::pair<BigInt, double> generatePrime(unsigned bits,
+                                               uint_fast32_t seed,
+                                               PrimalityTest &tester,
+                                               const PrngFactory &makePrng)
+{
+    auto prng = makePrng();
+    prng->setSeed(seed);
     KeyGenerator kg(std::move(prng), &tester, bits);
 
     const auto t0 = Clock::now();
     BigInt prime = kg.generateKeyConcurrent(seed);
-    double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0)
-                    .count();
+    const double ms = Duration(Clock::now() - t0).count();
+
     return {prime, ms};
 }
 
-/*-----------------------------------------------------------------------------
-   Seção 1 – tabela de primos para tamanhos grandes (Passo 2)
- ---------------------------------------------------------------------------*/
-static void experimentLargePrimes()
+/*─────────────────────────────────────────────────────────────────────────────
+ *  3.  Aplica tester a n usando um PRNG independente
+ *───────────────────────────────────────────────────────────────────────────*/
+static bool testWithPrng(const BigInt &n,
+                         PrimalityTest &tester,
+                         const PrngFactory &makePrng)
 {
+    auto prng = makePrng();
+    prng->setSeed(static_cast<uint_fast32_t>(n & 0xFFFFFFFFu)); // semente simples
+    return tester.isPrime(n, 10, *prng);
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+ *  4.  Bloco principal de benchmarks para UM PRNG
+ *───────────────────────────────────────────────────────────────────────────*/
+static void runBenchmarks(const std::string &prngLabel)
+{
+    /* ---------- Instâncias compartilhadas ---------- */
+    PrngFactory factory = makeFactory(prngLabel);
+    MillerRabinTest miller;
+    FermatTest fermat;
+
+    constexpr uint_fast32_t seedBase = 0xA5A5A5A5u;
+
+    /*-----------------------------------------------------------------------
+     *  Seção A – grandes primos
+     *---------------------------------------------------------------------*/
     const std::vector<unsigned> bitSizes{
         40, 56, 80, 128, 168, 224, 256, 512, 1024, 2048, 4096};
 
-    MillerRabinTest mr;
-    FermatTest ft;
-    constexpr uint_fast32_t seedBase = 12345;
-
-    std::cout << "\nAlgoritmo,Bits,Número primo (hex),Tempo (ms)\n";
+    std::cout << "\n─────────────────────────────────────────────────────────────\n";
+    std::cout << "PRNG = " << prngLabel << "   •   Geração de grandes primos\n";
+    std::cout << "Bits | Algoritmo |   Tempo (ms) | Prefixo(16 hex)\n";
+    std::cout << "─────┼───────────┼─────────────┼──────────────────────────────\n";
 
     for (unsigned bits : bitSizes)
     {
-        std::cout << "\n=== " << bits << " bits ===\n";
+        auto [pMR, tMR] = generatePrime(bits, seedBase + bits, miller, factory);
+        auto [pFT, tFT] = generatePrime(bits, seedBase + bits + 1, fermat, factory);
 
-        auto [p1, t1] = generatePrime(bits, seedBase + bits, mr);
-        auto [p2, t2] = generatePrime(bits, seedBase + bits + 1, ft);
+        const auto showPrefix = [bits](const BigInt &n) //  <-- [bits]
+        {
+            std::ostringstream oss;
+            /* evita deslocamento negativo quando bits ≤ 64 */
+            const unsigned shift = bits > 64 ? bits - 64 : 0;
+            oss << std::hex << (n >> shift);
+            return oss.str();
+        };
 
-        std::cout << "Miller–Rabin," << bits << ",0x"
-                  << std::hex << p1 << std::dec << ','
-                  << std::fixed << std::setprecision(2) << t1 << '\n';
+        std::cout << std::setw(4) << bits << " | "
+                  << "MillerRabin | " << std::setw(11) << std::fixed << std::setprecision(2)
+                  << tMR << " | 0x" << showPrefix(pMR) << '\n';
 
-        std::cout << "Fermat," << bits << ",0x"
-                  << std::hex << p2 << std::dec << ','
-                  << std::fixed << std::setprecision(2) << t2 << '\n';
+        std::cout << std::setw(4) << bits << " | "
+                  << "Fermat      | " << std::setw(11) << tFT << " | 0x"
+                  << showPrefix(pFT) << '\n';
     }
-}
 
-/*-----------------------------------------------------------------------------
-   Seção 2 – compara respostas MR × Fermat em números de 16/24/32 bits
-   • Gera 1 000 ímpares aleatórios de cada tamanho
-   • Conta discordâncias (Fermat diz “primo”, MR diz “composto” ou vice-versa)
- ---------------------------------------------------------------------------*/
-static void experimentSmallDisagreements()
-{
-    MillerRabinTest mr;
-    FermatTest ft;
-    RNG32 rng(0xBEEF);
+    /*-----------------------------------------------------------------------
+     *  Seção B – discrepâncias MR × Fermat em inteiros pequenos
+     *---------------------------------------------------------------------*/
     const std::vector<unsigned> smallBits{16, 24, 32};
-    constexpr int samplesPerSize = 1000;
+    constexpr int samples = 1'000;
+    std::mt19937 urbg(0xC0FFEE);
 
-    std::cout << "\nBits,Total testados,Discordâncias\n";
+    std::cout << "\nPRNG = " << prngLabel
+              << "   •   Discrepâncias (amostras aleatórias)\n";
+    std::cout << "Bits | Amostras | Discordâncias\n";
+    std::cout << "─────┼──────────┼──────────────\n";
 
     for (unsigned bits : smallBits)
     {
-        std::uniform_int_distribution<uint32_t> dist(
-            1u << (bits - 1), (1u << bits) - 1);
+        std::uniform_int_distribution<uint32_t> dist(1u << (bits - 1),
+                                                     (1u << bits) - 1);
 
         int disagreements = 0;
-
-        for (int i = 0; i < samplesPerSize; ++i)
+        for (int i = 0; i < samples; ++i)
         {
-            uint32_t n = dist(rng) | 1u; // garante ímpar
-            BigInt candidate = n;
-
-            bool isPrimeMR = mr.isPrime(candidate, 10, *(PRNG *)nullptr);
-            bool isPrimeFT = ft.isPrime(candidate, 10, *(PRNG *)nullptr);
-
-            if (isPrimeMR != isPrimeFT)
+            BigInt n = BigInt(dist(urbg) | 1u); // força ímpar
+            bool p1 = testWithPrng(n, miller, factory);
+            bool p2 = testWithPrng(n, fermat, factory);
+            if (p1 != p2)
                 ++disagreements;
         }
-        std::cout << bits << ',' << samplesPerSize << ',' << disagreements
-                  << '\n';
+        std::cout << std::setw(4) << bits << " | "
+                  << std::setw(8) << samples << " | "
+                  << std::setw(12) << disagreements << '\n';
     }
-}
 
-/*-----------------------------------------------------------------------------
-   Seção 3 – testa números de Carmichael (561, 1105, 1729, …)
-   • Fermat precisa falhar (retorna “primo”)
-   • Miller–Rabin deve detectar “composto”
- ---------------------------------------------------------------------------*/
-static void experimentCarmichael()
-{
+    /*-----------------------------------------------------------------------
+     *  Seção C – números de Carmichael
+     *---------------------------------------------------------------------*/
     const std::vector<uint64_t> carmichael{
-        561, 1105, 1729, 2465, 6601, 8911,
-        10585, 15841, 29341, 41041, 46657, 52633};
+        561, 1105, 1729, 2465, 6601, 8911, 10585,
+        15841, 29341, 41041, 46657, 52633};
 
-    MillerRabinTest mr;
-    FermatTest ft;
-    std::cout << "\nNúmero, Fermat, Miller–Rabin\n";
+    std::cout << "\nPRNG = " << prngLabel
+              << "   •   Números de Carmichael\n";
+    std::cout << "n     | Fermat | Miller–Rabin\n";
+    std::cout << "──────┼────────┼─────────────\n";
 
-    for (uint64_t n : carmichael)
+    for (uint64_t n64 : carmichael)
     {
-        BigInt x = n;
-        bool pF = ft.isPrime(x, 10, *(PRNG *)nullptr);
-        bool pMR = mr.isPrime(x, 10, *(PRNG *)nullptr);
+        BigInt n = n64;
+        bool isFermatPrime = testWithPrng(n, fermat, factory);
+        bool isMillerPrime = testWithPrng(n, miller, factory);
 
-        std::cout << n << ", "
-                  << (pF ? "primo " : "composto") << ", "
-                  << (pMR ? "primo " : "composto") << '\n';
+        std::cout << std::setw(6) << n64 << " | "
+                  << (isFermatPrime ? "primo " : "composto") << " | "
+                  << (isMillerPrime ? "primo" : "composto") << '\n';
     }
 }
 
-/*-----------------------------------------------------------------------------
-   Ponto de entrada: roda as três seções
- ---------------------------------------------------------------------------*/
+/*─────────────────────────────────────────────────────────────────────────────
+ *  MAIN – executa para MT e BBS
+ *───────────────────────────────────────────────────────────────────────────*/
 int main()
 {
-    experimentLargePrimes();        // Passo 2 original
-    experimentSmallDisagreements(); // comparações MR × Fermat
-    experimentCarmichael();         // pseudo-primos clássicos
-
+    try
+    {
+        runBenchmarks("MT");
+        runBenchmarks("BBS");
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[ERRO] " << e.what() << '\n';
+        return 1;
+    }
     return 0;
 }
