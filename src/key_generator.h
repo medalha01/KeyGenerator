@@ -93,6 +93,26 @@ public:
         return key;
     }
 
+    BigInt generate_key(uint_fast32_t seed, int iterations = 64, int key_size_bits = 2048)
+    {
+        if (key_size_bits == 0)
+        {
+            throw std::invalid_argument("Key size cannot be zero.");
+        }
+        BigInt key = 0;
+
+        while (key == 0)
+        {
+            BigInt candidate_key = generate_key_candidate(seed);
+            if (primality_tester->isPrime(candidate_key, iterations, *prng))
+            {
+                key = candidate_key;
+            }
+        }
+        return key;
+
+    }
+
     unsigned int get_key_size_bits() const
     {
         return key_size_bits;
