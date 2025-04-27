@@ -9,7 +9,6 @@
  *  • generatorG_       == g
  *  • fixedKeysA[i]     == aᵢ
  *
- *  Security note: chave fixa ⇒ apenas “para fins acadêmicos”.
  *──────────────────────────────────────────────────────────────*/
 #include "naor_reingold_prf.h"
 #include <vector>
