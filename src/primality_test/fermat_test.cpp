@@ -28,8 +28,14 @@ bool FermatTest::isPrime(const BigInt& modulusUnderTest,
 
     for (int iteration = 0; iteration < witnessIterations; ++iteration)
     {
-        const BigInt candidateWitness =
-            generateWitness(modulusUnderTest, randomGenerator);
+        //const BigInt candidateWitness =
+        //    generateWitness(modulusUnderTest, randomGenerator);
+        BigInt candidateWitness;
+        BigInt g;
+        do {
+            candidateWitness = generateWitness(modulusUnderTest, randomGenerator);
+            g = boost::math::gcd(candidateWitness, modulusUnderTest);
+        } while (g != 1);
 
         /* a^(n-1) mod n */
         const BigInt modExpResult =
