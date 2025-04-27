@@ -42,6 +42,8 @@ NaorReingoldPRF::NaorReingoldPRF(uint_fast32_t initialSeed)
       generatorG_(DEMO_GENERATOR_G),
       inputVectorX_(initialSeed)
 {
+    /* Verifica se os parâmetros são válidos */
+
     if ((modulusP_ - 1) % subgroupOrderQ_ != 0 ||
         fixedKeysA.size() != INPUT_DIMENSION + 1)
         throw std::runtime_error("Invalid Naor-Reingold parameters");
@@ -57,10 +59,11 @@ uint_fast32_t NaorReingoldPRF::generate()
 {
     /* Produto do expoente  Π_{i | xᵢ=1} aᵢ  (mod Q) */
     BigInt exponentProduct = 1;
+    /* Percorre os bits de x  (x = x₀, x₁, x₂, ...) */
     for (unsigned bitIndex = 0; bitIndex < INPUT_DIMENSION; ++bitIndex)
         if (boost::multiprecision::bit_test(inputVectorX_, bitIndex))
             exponentProduct = (exponentProduct * fixedKeysA[bitIndex + 1])
-                              % subgroupOrderQ_;
+                              % subgroupOrderQ_; 
 
     /* Base g^{a₀} (mod P) */
     BigInt preComputedBase =
@@ -74,7 +77,9 @@ uint_fast32_t NaorReingoldPRF::generate()
                                     exponentProduct,
                                     modulusP_);
 
-    ++inputVectorX_;                                             // x ← x+1
+    /* Atualiza o vetor de entrada x  (x ← x+1) */
+    ++inputVectorX_;   
+    //                                            // x ← x+1
     return static_cast<uint_fast32_t>(prfValue & 0xFFFFFFFFu);   // 32 bits
 }
 
