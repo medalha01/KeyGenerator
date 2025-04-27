@@ -33,21 +33,26 @@ bool MillerRabinTest::isPrime(const BigInt& modulusUnderTest,
     BigInt oddComponent;
     unsigned powerOfTwoExponent;
     const BigInt nMinusOne = modulusUnderTest - 1;
+    // Decompor n-1
     decompose(nMinusOne, powerOfTwoExponent, oddComponent);
 
     for (int iteration = 0; iteration < witnessIterations; ++iteration)
     {
         BigInt candidateWitness =
             generateWitness(modulusUnderTest, randomGenerator);
-
+        
+        if (boost::math::gcd(candidateWitness, modulusUnderTest) != 1)
+            return false;
+        // gcd(a, n) != 1 ⇒ witness não é primo
         BigInt currentPower =
             boost::multiprecision::powm(candidateWitness,
                                         oddComponent,
                                         modulusUnderTest);
-
+        // x₀ = a^d mod n
         if (currentPower == 1 || currentPower == nMinusOne)
             continue;                                            // Próxima witness
 
+        // x₀ ∈ {1, n-1} ⇒ possivelmente primo
         bool hitMinusOne = false;
         for (unsigned j = 1; j < powerOfTwoExponent; ++j)
         {
