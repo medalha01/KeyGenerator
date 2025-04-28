@@ -14,7 +14,9 @@
 #include <iostream>
 #include <random>
 #include <vector>
-#include <map> // Para mapear bits -> repetições
+#include <map>
+#include <cmath>
+#include <limits>
 
 using BigInt = boost::multiprecision::cpp_int;
 using Clock = std::chrono::high_resolution_clock;
@@ -22,18 +24,46 @@ using Duration = std::chrono::duration<double, std::milli>;
 
 using PrngFactory = std::function<std::unique_ptr<PRNG>()>;
 
-static PrngFactory makeFactory(const std::string &tag)
+static PrngFactory makeFactory(const std::string &tag, uint32_t initialSeed = 0)
 {
     if (tag == "MT")
-        return []
-        { return std::make_unique<MersenneTwister>(0); };
+        return [initialSeed]
+        { return std::make_unique<MersenneTwister>(initialSeed); };
     if (tag == "NRPRF")
-        return []
-        { return std::make_unique<NaorReingoldPRF>(0); };
+        return [initialSeed]
+        { return std::make_unique<NaorReingoldPRF>(initialSeed); };
     throw std::invalid_argument("Unknown PRNG tag: " + tag);
 }
 
-// Função auxiliar para gerar um primo (inalterada)
+static BigInt generateNBitOdd(unsigned bits, PRNG &prng)
+{
+    if (bits == 0)
+        return 0;
+    if (bits > 100000)
+        throw std::out_of_range("Bit size too large for practical generation"); // Safety limit
+
+    const unsigned numChunks = static_cast<unsigned>(std::ceil(static_cast<double>(bits) / 32.0));
+    BigInt result = 0;
+    for (unsigned i = 0; i < numChunks; ++i)
+    {
+        result <<= 32;
+        result |= prng.generate();
+    }
+
+    // Mask to get exactly N bits
+    BigInt mask = (BigInt(1) << bits) - 1;
+    result &= mask;
+
+    // Ensure the number has the desired bit length (set MSB)
+    result |= (BigInt(1) << (bits - 1));
+
+    // Ensure it's odd
+    result |= 1;
+
+    return result;
+}
+
+// Função auxiliar para gerar um primo
 static std::pair<BigInt, double>
 generatePrime(unsigned bits,
               uint32_t seed,
@@ -50,20 +80,69 @@ generatePrime(unsigned bits,
     return {prime, ms};
 }
 
-// Função auxiliar para testar primalidade (inalterada)
+// Função auxiliar para testar primalidade
 static bool testWithPRNG(const BigInt &n,
                          PrimalityTest &tester,
-                         const PrngFactory &factory)
+                         const PrngFactory &factory,
+                         int witnessIterations = 10)
 {
     auto prng = factory();
     uint32_t derivedSeed = static_cast<uint32_t>(n & 0xFFFFFFFFu);
     if (derivedSeed == 0)
         derivedSeed = 1; // Evita semente 0
     prng->setSeed(derivedSeed);
-    return tester.isPrime(n, 10, *prng); // 10 iterações padrão
+    return tester.isPrime(n, witnessIterations, *prng); // 10 iterações padrão
 }
 
-// Função principal de benchmark
+// Benchmark 1: PRNG Generation Speed
+static void runPrngGenerationBenchmark()
+{
+    std::cout << "\n"
+              << std::string(60, '=') << "\n";
+    std::cout << "   BENCHMARK: PRNG GENERATION SPEED\n";
+    std::cout << "   (Time to generate 1.000 N-bit numbers)\n";
+    std::cout << std::string(60, '=') << "\n";
+
+    const std::vector<unsigned> bitSizes =
+        {40, 56, 80, 128, 168, 224, 256, 512, 1024, 2048, 4096};
+    const int numIntegersToGenerate = 1000;
+    const int numBenchmarkReps = 10;
+    const uint32_t baseSeed = 0xBEEFCAFE;
+
+    std::cout << " PRNG | Bits | Avg Time / Batch (ms)\n";
+    std::cout << "------|------|----------------------\n";
+
+    for (const std::string &prngTag : {"MT", "NRPRF"})
+    {
+
+        for (unsigned bits : bitSizes)
+        {
+            double totalTime = 0.0;
+            // Use a consistent factory for this size
+            PrngFactory factory = makeFactory(prngTag, baseSeed + bits);
+
+            for (int rep = 0; rep < numBenchmarkReps; ++rep)
+            {
+                auto prng = factory();
+                prng->setSeed(baseSeed + bits + rep);
+                auto start = Clock::now();
+                for (int i = 0; i < numIntegersToGenerate; ++i)
+                {
+                    [[maybe_unused]] volatile BigInt temp = generateNBitOdd(bits, *prng);
+                }
+                totalTime += Duration(Clock::now() - start).count();
+            }
+
+            double avgTime = totalTime / numBenchmarkReps;
+
+            std::cout << std::setw(5) << prngTag << " | "
+                      << std::setw(4) << bits << " | "
+                      << std::setw(20) << std::fixed << std::setprecision(4) << avgTime << '\n';
+        }
+        std::cout << "------|------|----------------------\n";
+    }
+}
+
 static void runBenchmarks(const std::string &prngTag)
 {
     PrngFactory factory = makeFactory(prngTag);
@@ -130,7 +209,6 @@ static void runBenchmarks(const std::string &prngTag)
         double avgTimeMR = (repetitions > 0) ? totalTimeMR / repetitions : 0.0;
         double avgTimeFT = (repetitions > 0) ? totalTimeFT / repetitions : 0.0;
 
-        // Função lambda para obter prefixo (inalterada)
         auto prefix64 = [bits](const BigInt &n)
         {
             std::ostringstream oss;
@@ -153,7 +231,7 @@ static void runBenchmarks(const std::string &prngTag)
         std::cout << "------|------|-----|------------|-----------------\n"; // Separador
     }
 
-    // --- Seção B: Divergências em inteiros pequenos (Inalterada) ---
+    // --- Seção B: Divergências em inteiros pequenos ---
     const std::vector<unsigned> smallBits{16, 24, 32, 256, 512};
     const int sampleCount = 1'000;
     std::mt19937 urbg(0xC0FFEE); // Gerador independente para amostras
@@ -182,7 +260,7 @@ static void runBenchmarks(const std::string &prngTag)
     }
     std::cout << "------|----------|--------------\n";
 
-    // --- Seção C: Carmichael (Inalterada) ---
+    // --- Seção C: Carmichael ---
     const uint64_t carmichael[] = {
         561, 1105, 1729, 2465, 6601, 8911, 10585, 15841,
         29341, 41041, 46657, 52633};
@@ -204,13 +282,19 @@ static void runBenchmarks(const std::string &prngTag)
     std::cout << "-------|----------|------------\n";
 }
 
-// --- main (Inalterada) ---
+// --- main ---
 int main()
 {
     try
     {
+        std::cout << "Starting Benchmarks...\n";
+
+        runPrngGenerationBenchmark();
+
         runBenchmarks("MT");
         runBenchmarks("NRPRF");
+
+        std::cout << "\nBenchmarks Completetada.\n";
     }
     catch (const std::exception &e)
     {
@@ -219,7 +303,7 @@ int main()
     }
     catch (...)
     {
-        std::cerr << "[ERROR] unknown exception\n"; // Mensagem ligeiramente diferente
+        std::cerr << "[ERROR] unknown exception\n";
         return 1;
     }
     return 0;
